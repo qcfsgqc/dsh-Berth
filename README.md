@@ -4,7 +4,8 @@
 
 - 显示名：DSH Berth
 - 可执行文件：`dsh-berth`
-- Qt：6.10.2（精确版本）
+- Qt：6.10.2（精确版本），需要 Qt WebEngine 模块（Maintenance Tool 里勾选 Qt WebEngine、Qt WebChannel、Qt Positioning）
+
 - 当前平台：仅 Windows
 
 数据默认在 `%APPDATA%\dsh-Berth\`：`settings.json` 与 `instances.json`。每套实例单独端口、profile、`DSH_HOME`。

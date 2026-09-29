@@ -1,5 +1,6 @@
 #include "Supervisor.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,6 +12,20 @@
 #  endif
 #  include <windows.h>
 #endif
+
+namespace {
+// 往实例日志里追加一行 Berth 自己的标记，终端面板据此区分每次运行
+void appendMarker(const QString &logPath, const QString &message) {
+    if (logPath.isEmpty())
+        return;
+    QFile file(logPath);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Append))
+        return;
+    const QString line = QStringLiteral("[Berth %1] %2\n")
+        .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")), message);
+    file.write(line.toUtf8());
+}
+}
 
 Supervisor::Supervisor(QObject *parent) : QObject(parent) {}
 
@@ -31,10 +46,10 @@ void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
     auto *process = new QProcess(this);
     process->setProgram(dshExecutable.isEmpty() ? QStringLiteral("dsh") : dshExecutable);
     process->setArguments({
-        QStringLiteral("web"),
+        // dsh --profile <name> 启动指定 profile；其后首个启动器不认识的参数起，全部交给 web app
+        QStringLiteral("--profile"), instance.profile.isEmpty() ? QStringLiteral("web") : instance.profile,
         QStringLiteral("--port"), QString::number(instance.port),
-        QStringLiteral("--no-open"),
-        QStringLiteral("--profile"), instance.profile.isEmpty() ? QStringLiteral("web") : instance.profile
+        QStringLiteral("--no-open")
     });
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     if (!instance.dshHome.isEmpty())
@@ -48,6 +63,7 @@ void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
     process->setStandardOutputFile(logPath, QIODevice::Append);
     process->setStandardErrorFile(logPath, QIODevice::Append);
     process->setProcessChannelMode(QProcess::SeparateChannels);
+    appendMarker(logPath, QStringLiteral("启动: %1 %2").arg(process->program(), process->arguments().join(QLatin1Char(' '))));
 
 #ifdef Q_OS_WIN
     process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
@@ -57,12 +73,15 @@ void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
     });
 #endif
 
-    connect(process, &QProcess::errorOccurred, this, [this, id = instance.id](QProcess::ProcessError) {
-        auto *proc = m_processes.value(id);
-        const QString error = proc ? proc->errorString() : QStringLiteral("failed to start");
+    connect(process, &QProcess::errorOccurred, this, [this, process, logPath, id = instance.id](QProcess::ProcessError) {
+        const QString error = process->errorString();
+        appendMarker(logPath, QStringLiteral("错误: %1").arg(error));
         emit statusChanged(id, QStringLiteral("failed"), 0, error);
     });
-    connect(process, &QProcess::finished, this, [this, id = instance.id](int code, QProcess::ExitStatus status) {
+    connect(process, &QProcess::finished, this, [this, logPath, id = instance.id](int code, QProcess::ExitStatus status) {
+        appendMarker(logPath, status == QProcess::CrashExit
+            ? QStringLiteral("进程崩溃")
+            : QStringLiteral("进程退出，exit %1").arg(code));
         m_processes.remove(id);
         // dsh 自己退出时，顺手清掉它留下的子进程
         releaseJob(id);
@@ -82,6 +101,7 @@ void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
         emit statusChanged(instance.id, QStringLiteral("failed"), 0, error);
         return;
     }
+    process->setProperty("berthLogPath", logPath);
     m_processes.insert(instance.id, process);
     attachJob(instance.id, process);
     emit statusChanged(instance.id, QStringLiteral("starting"), process->processId(), {});
@@ -97,7 +117,9 @@ void Supervisor::stop(const QString &id) {
         return;
     }
     emit statusChanged(id, QStringLiteral("stopping"), process->processId(), {});
+    const QString logPath = process->property("berthLogPath").toString();
     killTree(id, process);
+    appendMarker(logPath, QStringLiteral("已手动停止"));
     emit statusChanged(id, QStringLiteral("stopped"), 0, {});
 }
 

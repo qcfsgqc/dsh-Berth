@@ -172,7 +172,16 @@ Item {
                     Button { text: "停止"; onClicked: berth.stopInstance(pane.selectedId) }
                     Button { text: "重启"; onClicked: berth.restartInstance(pane.selectedId) }
                     Button { text: "打开界面"; onClicked: berth.openUi(pane.selectedId) }
+                    Button { text: "浏览器打开"; onClicked: berth.openInBrowser(pane.selectedId) }
+
                     Button { text: "日志"; onClicked: berth.openLog(pane.selectedId) }
+                    Button {
+                        text: "插件"
+                        onClicked: {
+                            pluginsDialog.instanceId = pane.selectedId
+                            pluginsDialog.open()
+                        }
+                    }
                     Item { Layout.fillWidth: true }
                     Button {
                         text: "删除"
@@ -183,7 +192,74 @@ Item {
                         }
                     }
                 }
-                Item { Layout.fillHeight: true }
+                // 终端面板：实时显示泊位日志尾部（dsh 的 stdout/stderr + Berth 标记）
+                RowLayout {
+                    Layout.fillWidth: true
+                    Label { text: "终端输出"; font.bold: true }
+                    Item { Layout.fillWidth: true }
+                    CheckBox { id: followBox; text: "自动滚动"; checked: true }
+                    Button { text: "刷新"; onClicked: terminal.refresh(true) }
+                }
+                Rectangle {
+                    id: terminal
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    Layout.minimumHeight: 120
+                    color: "#1e1e1e"
+                    radius: 4
+
+                    function refresh(forceBottom) {
+                        if (!pane.selectedId)
+                            return
+                        const text = berth.readLog(pane.selectedId)
+                        if (text === logView.text)
+                            return
+                        const stick = forceBottom || followBox.checked || logFlick.atYEnd
+                        logView.text = text
+                        if (stick)
+                            Qt.callLater(function() {
+                                logFlick.contentY = Math.max(0, logFlick.contentHeight - logFlick.height)
+                            })
+                    }
+
+                    Flickable {
+                        id: logFlick
+                        anchors.fill: parent
+                        anchors.margins: 8
+                        clip: true
+                        contentWidth: width
+                        contentHeight: logView.contentHeight
+                        boundsBehavior: Flickable.StopAtBounds
+                        ScrollBar.vertical: ScrollBar {}
+
+                        TextEdit {
+                            id: logView
+                            width: logFlick.width - 12
+                            readOnly: true
+                            selectByMouse: true
+                            wrapMode: TextEdit.WrapAnywhere
+                            textFormat: TextEdit.PlainText
+                            color: "#d4d4d4"
+                            selectionColor: "#264f78"
+                            font.family: "Consolas"
+                            font.pixelSize: 12
+                        }
+                    }
+
+                    Label {
+                        anchors.centerIn: parent
+                        visible: logView.text.length === 0
+                        text: "暂无输出"
+                        color: "#808080"
+                    }
+
+                    Timer {
+                        interval: 700
+                        repeat: true
+                        running: pane.visible && pane.selectedId.length > 0
+                        onTriggered: terminal.refresh(false)
+                    }
+                }
             }
 
             Label {
@@ -194,6 +270,8 @@ Item {
             }
         }
     }
+
+    PluginsDialog { id: pluginsDialog }
 
     property string selectedId: ""
     property string currentStatus: "stopped"
@@ -219,7 +297,11 @@ Item {
         currentError = item.lastError || ""
     }
 
-    onSelectedIdChanged: syncForm()
+    onSelectedIdChanged: {
+        syncForm()
+        logView.text = ""
+        terminal.refresh(true)
+    }
     Connections {
         target: berth.instances
         function onDataChanged() { pane.syncForm() }

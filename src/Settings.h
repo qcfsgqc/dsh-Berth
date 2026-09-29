@@ -16,6 +16,8 @@ public:
 
     QString dshExecutable() const;
     void setDshExecutable(const QString &value);
+    // 解析成可直接交给 QProcess 的完整路径（Windows 下按 PATHEXT 找 .cmd/.bat 等）
+    QString resolvedDshExecutable() const;
     QString nodeExecutable() const;
     void setNodeExecutable(const QString &value);
     QString dataDir() const;

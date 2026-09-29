@@ -113,12 +113,33 @@ ApplicationWindow {
         Timer { id: toastTimer; interval: 2800; onTriggered: toast.close() }
     }
 
+    // 泊位 id → WebWindow；每个泊位最多一个界面窗口
+    property var webWindows: ({})
+    Component { id: webWindowComponent; WebWindow {} }
+
     Connections {
         target: berth
         function onNotice(message) {
             toastLabel.text = message
             toast.open()
             toastTimer.restart()
+        }
+        function onUiRequested(id, url) {
+            let w = win.webWindows[id]
+            if (!w) {
+                w = webWindowComponent.createObject(null, {
+                    instanceId: id,
+                    instanceName: berth.instance(id).name || ""
+                })
+                if (!w)
+                    return
+                win.webWindows[id] = w
+                w.closing.connect(function() {
+                    delete win.webWindows[id]
+                    w.destroy()
+                })
+            }
+            w.load(url)
         }
     }
 }

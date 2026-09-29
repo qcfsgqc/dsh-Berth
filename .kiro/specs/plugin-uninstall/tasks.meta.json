@@ -1,0 +1,97 @@
+{
+  "pbtResults": {},
+  "executionHistory": {
+    "1. 新增 `src/PluginOps.h/.cpp`，实现 `readPlugins` 与 `removeFromBundles`，并加入 `CMakeLists.txt`": [
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700411873
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700421008
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700513449
+      }
+    ],
+    "2. 在 `src/AppController.h/.cpp` 加 `listPlugins(id)`，把 profile 目录解析为 `resolveHome(dshHome)/profiles/<profile>`": [
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700412030
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700521146
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700565865
+      }
+    ],
+    "3. 在 `src/AppController.h/.cpp` 加 `uninstallPlugin(id, name, removePackage)`、`pluginBusy` 属性和 `pluginUninstallFinished` 信号，照 design 的 6 步流程执行": [
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700412131
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700567221
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700657933
+      }
+    ],
+    "4. 新增 `qml/PluginsDialog.qml`，并加入 `CMakeLists.txt` 的 `QML_FILES`": [
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700412208
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700658863
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700728195
+      }
+    ],
+    "5. 在 `qml/InstancePane.qml` 操作按钮行\"日志\"后加\"插件\"按钮，打开 PluginsDialog 并传入 `pane.selectedId`": [
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700412284
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700729740
+      },
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700778171
+      }
+    ],
+    "6. 手动验证（由用户编译运行）": [
+      {
+        "executionId": "0a5ed334-6091-4305-9102-20307851429d",
+        "chatSessionId": "sess_54c46c29-f97e-4bee-b8bb-3f0273a6baca",
+        "timestamp": 1790700412386
+      }
+    ]
+  }
+}

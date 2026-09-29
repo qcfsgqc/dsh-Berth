@@ -26,6 +26,7 @@ find_package(Qt6 6.10.2 EXACT REQUIRED COMPONENTS
     QuickControls2
     Network
     Widgets
+    WebEngineQuick
 )
 
 qt_standard_project_setup(REQUIRES 6.10.2)
@@ -42,6 +43,8 @@ qt_add_executable(dsh-berth
     src/Supervisor.cpp
     src/AppController.h
     src/AppController.cpp
+    src/PluginOps.h
+    src/PluginOps.cpp
 )
 
 qt_add_qml_module(dsh-berth
@@ -51,6 +54,8 @@ qt_add_qml_module(dsh-berth
         qml/Main.qml
         qml/InstancePane.qml
         qml/SettingsPane.qml
+        qml/PluginsDialog.qml
+        qml/WebWindow.qml
 )
 
 target_include_directories(dsh-berth PRIVATE src)
@@ -63,6 +68,7 @@ target_link_libraries(dsh-berth PRIVATE
     Qt6::QuickControls2
     Qt6::Network
     Qt6::Widgets
+    Qt6::WebEngineQuick
 )
 
 target_compile_definitions(dsh-berth PRIVATE

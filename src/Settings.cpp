@@ -20,6 +20,16 @@ void Settings::setDshExecutable(const QString &value) {
     emit dshExecutableChanged();
 }
 
+QString Settings::resolvedDshExecutable() const {
+    const QString exe = m_dshExecutable.trimmed().isEmpty() ? QStringLiteral("dsh") : m_dshExecutable.trimmed();
+    // 用户填的是路径就原样使用
+    if (exe.contains(QLatin1Char('/')) || exe.contains(QLatin1Char('\\')))
+        return exe;
+    // 裸命令名：npm 全局安装只有 dsh.cmd，CreateProcess 不会自动补 .cmd，需要先在 PATH 里找
+    const QString found = QStandardPaths::findExecutable(exe);
+    return found.isEmpty() ? exe : found;
+}
+
 QString Settings::nodeExecutable() const { return m_nodeExecutable; }
 
 void Settings::setNodeExecutable(const QString &value) {

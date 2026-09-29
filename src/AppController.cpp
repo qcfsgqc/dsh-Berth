@@ -1,4 +1,5 @@
 #include "AppController.h"
+#include "PluginOps.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -7,10 +8,31 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
+#include <QStandardPaths>
+#include <QTimer>
 #include <QUrl>
 #include <QUuid>
 #include <QVariantMap>
+
+#ifdef Q_OS_WIN
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#endif
+
+namespace {
+// 取输出末尾最多 maxLines 行（去掉空行），作为结果摘要
+QString tailLines(const QString &text, int maxLines) {
+    QStringList lines = text.split(QRegularExpression(QStringLiteral("\r?\n")), Qt::SkipEmptyParts);
+    if (lines.size() > maxLines)
+        lines = lines.mid(lines.size() - maxLines);
+    return lines.join(QLatin1Char('\n'));
+}
+}
 
 AppController::AppController(QObject *parent)
     : QObject(parent), m_instances(this), m_settings(this), m_supervisor(this) {
@@ -76,7 +98,7 @@ void AppController::startInstance(const QString &id) {
     const Instance item = m_instances.item(id);
     if (item.id.isEmpty() || m_supervisor.isRunning(id))
         return;
-    m_supervisor.start(item, m_settings.dshExecutable());
+    m_supervisor.start(item, m_settings.resolvedDshExecutable());
 }
 
 void AppController::stopInstance(const QString &id) {
@@ -89,10 +111,52 @@ void AppController::restartInstance(const QString &id) {
 }
 
 void AppController::openUi(const QString &id) {
+    if (m_instances.item(id).id.isEmpty())
+        return;
+    requestUi(id, 0);
+}
+
+void AppController::requestUi(const QString &id, int attempt) {
     const Instance item = m_instances.item(id);
     if (item.id.isEmpty())
         return;
-    QDesktopServices::openUrl(QUrl(QStringLiteral("http://127.0.0.1:%1").arg(item.port)));
+    // 运行中但 token 行还没刷进日志：最多等 5 秒
+    if (tokenUrl(id).isEmpty() && item.status == QLatin1String("running") && attempt < 20) {
+        QTimer::singleShot(250, this, [this, id, attempt]() { requestUi(id, attempt + 1); });
+        return;
+    }
+    emit uiRequested(id, uiUrl(id));
+}
+
+void AppController::openInBrowser(const QString &id) {
+    if (m_instances.item(id).id.isEmpty())
+        return;
+    QDesktopServices::openUrl(QUrl(uiUrl(id)));
+}
+
+QString AppController::uiUrl(const QString &id) const {
+    const Instance item = m_instances.item(id);
+    if (item.id.isEmpty())
+        return {};
+    const QString url = tokenUrl(id);
+    return url.isEmpty() ? QStringLiteral("http://127.0.0.1:%1/").arg(item.port) : url;
+}
+
+QString AppController::tokenUrl(const QString &id) const {
+    const Instance item = m_instances.item(id);
+    if (item.id.isEmpty())
+        return {};
+    const QString text = readLog(id, 262144);
+    // 只看最后一次启动之后的输出，避免拿到上次运行的过期 token
+    const qsizetype start = text.lastIndexOf(QStringLiteral("] 启动: "));
+    const QString recent = start >= 0 ? text.mid(start) : text;
+    // dsh web 启动后打印：dsh web: http://127.0.0.1:<port>/?token=...
+    const QRegularExpression re(QStringLiteral("https?://(?:127\\.0\\.0\\.1|localhost):%1/\\S*").arg(item.port));
+    QRegularExpressionMatchIterator it = re.globalMatch(recent);
+    QString last;
+    while (it.hasNext())
+        last = it.next().captured(0);
+    return last;
 }
 
 void AppController::openLog(const QString &id) {
@@ -101,6 +165,33 @@ void AppController::openLog(const QString &id) {
         return;
     QDesktopServices::openUrl(QUrl::fromLocalFile(item.logPath));
 }
+
+QString AppController::readLog(const QString &id, int maxBytes) const {
+    const Instance item = m_instances.item(id);
+    if (item.id.isEmpty() || item.logPath.isEmpty())
+        return {};
+    QFile file(item.logPath);
+    if (!file.open(QIODevice::ReadOnly))
+        return {};
+    const qint64 size = file.size();
+    const bool truncated = maxBytes > 0 && size > maxBytes;
+    if (truncated)
+        file.seek(size - maxBytes);
+    QByteArray data = file.readAll();
+    // 从中间截断时丢掉第一行残片，避免半个 UTF-8 字符
+    if (truncated) {
+        const int nl = data.indexOf('\n');
+        if (nl >= 0)
+            data.remove(0, nl + 1);
+    }
+    QString text = QString::fromUtf8(data);
+    // 去掉 ANSI 颜色/光标控制序列，终端面板只显示纯文本
+    static const QRegularExpression ansi(QStringLiteral("\\x1B\\[[0-9;?]*[ -/]*[@-~]"));
+    text.remove(ansi);
+    text.remove(QLatin1Char('\r'));
+    return text;
+}
+
 
 QVariantMap AppController::instance(const QString &id) const {
     const Instance item = m_instances.item(id);
@@ -133,6 +224,145 @@ QString AppController::resolveHome(const QString &dshHome) const {
     if (!env.trimmed().isEmpty())
         return QDir::cleanPath(env.trimmed());
     return QDir::cleanPath(QDir::homePath() + QStringLiteral("/.dsh"));
+}
+
+QString AppController::profileDirFor(const QString &id, QString *error) const {
+    const Instance item = m_instances.item(id);
+    if (item.id.isEmpty()) {
+        if (error)
+            *error = QStringLiteral("找不到泊位");
+        return {};
+    }
+    return resolveHome(item.dshHome) + QStringLiteral("/profiles/") + item.profile;
+}
+
+QVariantMap AppController::listPlugins(const QString &id) const {
+    QString error;
+    const QString dir = profileDirFor(id, &error);
+    if (dir.isEmpty()) {
+        QVariantMap result;
+        result.insert(QStringLiteral("ok"), false);
+        result.insert(QStringLiteral("error"), error);
+        result.insert(QStringLiteral("plugins"), QVariantList());
+        return result;
+    }
+    return PluginOps::readPlugins(dir);
+}
+
+bool AppController::pluginBusy() const {
+    return m_pluginBusy;
+}
+
+void AppController::setPluginBusy(bool busy) {
+    if (m_pluginBusy == busy)
+        return;
+    m_pluginBusy = busy;
+    emit pluginBusyChanged();
+}
+
+void AppController::uninstallPlugin(const QString &id, const QString &name, bool removePackage) {
+    // 1. 已有卸载在进行
+    if (m_pluginBusy)
+        return;
+
+    const Instance target = m_instances.item(id);
+    if (target.id.isEmpty()) {
+        emit pluginUninstallFinished(id, false, QStringLiteral("找不到泊位"));
+        return;
+    }
+    QString error;
+    const QString dir = profileDirFor(id, &error);
+    if (dir.isEmpty()) {
+        emit pluginUninstallFinished(id, false, error);
+        return;
+    }
+
+    // 2. 同一 DSH_HOME + profile 的泊位必须都已停止
+    const QString home = resolveHome(target.dshHome);
+    QStringList busyNames;
+    for (const Instance &item : m_instances.items()) {
+        if (item.profile != target.profile || resolveHome(item.dshHome) != home)
+            continue;
+        if (item.status == QLatin1String("running") || item.status == QLatin1String("starting")
+            || item.status == QLatin1String("stopping"))
+            busyNames.push_back(item.name);
+    }
+    if (!busyNames.isEmpty()) {
+        emit pluginUninstallFinished(id, false,
+                                     QStringLiteral("先停止：") + busyNames.join(QStringLiteral("、")));
+        return;
+    }
+
+    // 3. 要卸载插件包时先确认本机有 pnpm，没有就不做任何修改
+    if (removePackage && QStandardPaths::findExecutable(QStringLiteral("pnpm")).isEmpty()) {
+        emit pluginUninstallFinished(id, false, QStringLiteral("需要安装 pnpm"));
+        return;
+    }
+
+    // 4. 从 dsh.profile.bundles 移除（不在其中时 removeFromBundles 直接成功、不写文件）
+    if (!PluginOps::removeFromBundles(dir, name, &error)) {
+        emit pluginUninstallFinished(id, false, error);
+        return;
+    }
+
+    // 5. 只改配置
+    if (!removePackage) {
+        emit pluginUninstallFinished(id, true, QStringLiteral("已从配置移除"));
+        return;
+    }
+
+    // 6. 异步执行 dsh plugin --profile <p> remove <name>；失败不回滚 bundles
+    setPluginBusy(true);
+    auto *process = new QProcess(this);
+    m_pluginProcess = process;
+    process->setProgram(m_settings.resolvedDshExecutable());
+    process->setArguments({
+        QStringLiteral("plugin"),
+        QStringLiteral("--profile"), target.profile,
+        QStringLiteral("remove"), name
+    });
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (!target.dshHome.isEmpty())
+        env.insert(QStringLiteral("DSH_HOME"), target.dshHome);
+    process->setProcessEnvironment(env);
+    process->setWorkingDirectory(dir);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+
+#ifdef Q_OS_WIN
+    process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *args) {
+        args->flags |= CREATE_NO_WINDOW;
+        args->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        args->startupInfo->wShowWindow = SW_HIDE;
+    });
+#endif
+
+    const QString failPrefix = QStringLiteral("bundles 已移除，pnpm 失败");
+    connect(process, &QProcess::finished, this,
+            [this, process, id, failPrefix](int code, QProcess::ExitStatus status) {
+        const QString summary = tailLines(QString::fromLocal8Bit(process->readAll()), 20);
+        const bool ok = status == QProcess::NormalExit && code == 0;
+        if (m_pluginProcess == process)
+            m_pluginProcess = nullptr;
+        process->deleteLater();
+        setPluginBusy(false);
+        QString message = ok ? QStringLiteral("已卸载") : failPrefix;
+        if (!summary.isEmpty())
+            message += QLatin1Char('\n') + summary;
+        emit pluginUninstallFinished(id, ok, message);
+    });
+    // 启动失败时不会有 finished 信号，这里单独收尾
+    connect(process, &QProcess::errorOccurred, this,
+            [this, process, id, failPrefix](QProcess::ProcessError err) {
+        if (err != QProcess::FailedToStart)
+            return;
+        const QString reason = process->errorString();
+        if (m_pluginProcess == process)
+            m_pluginProcess = nullptr;
+        process->deleteLater();
+        setPluginBusy(false);
+        emit pluginUninstallFinished(id, false, failPrefix + QLatin1Char('\n') + reason);
+    });
+    process->start();
 }
 
 QStringList AppController::detectProfiles(const QString &dshHome) const {

@@ -9,8 +9,11 @@
 #include <QMenu>
 #include <QAction>
 #include <QStyle>
+#include <QtWebEngineQuick/qtwebenginequickglobal.h>
 
 int main(int argc, char *argv[]) {
+    // WebEngine 必须在创建 QApplication 之前初始化
+    QtWebEngineQuick::initialize();
     // QSystemTrayIcon / QMenu 属于 QtWidgets，必须用 QApplication
     QApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("dsh-Berth"));
