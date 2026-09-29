@@ -13,7 +13,18 @@
 
 ## 构建
 
-用 Qt 6.10.2 的 MSVC kit（64-bit）：
+一键编译（需要系统里的 Python 3.10，会自动找 Qt、加载 MSVC 环境、找 cmake/ninja）：
+
+```powershell
+py -3.10 scripts/build.py
+py -3.10 scripts/build.py --config Debug --run
+py -3.10 scripts/build.py --deploy   # 用 windeployqt 把依赖拷到 exe 旁
+```
+
+本机路径（Qt、vcvars64、cmake、ninja、构建目录）写在 `scripts/local.py`，不进 git；首次运行会从 `scripts/local.example.py` 自动复制。优先级：命令行参数 > `local.py` > 环境变量 > 自动查找。
+
+手动构建，用 Qt 6.10.2 的 MSVC kit（64-bit）：
+
 
 ```powershell
 cmake -S . -B build -G Ninja -DCMAKE_PREFIX_PATH="C:\Qt\6.10.2\msvc2022_64"

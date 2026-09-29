@@ -25,6 +25,7 @@ find_package(Qt6 6.10.2 EXACT REQUIRED COMPONENTS
     Quick
     QuickControls2
     Network
+    Widgets
 )
 
 qt_standard_project_setup(REQUIRES 6.10.2)
@@ -61,6 +62,7 @@ target_link_libraries(dsh-berth PRIVATE
     Qt6::Quick
     Qt6::QuickControls2
     Qt6::Network
+    Qt6::Widgets
 )
 
 target_compile_definitions(dsh-berth PRIVATE

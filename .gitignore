@@ -4,3 +4,5 @@ CMakeUserPresets.json
 *.user
 *.autosave
 .qt/
+scripts/local.py
+__pycache__/

@@ -1,6 +1,6 @@
 #include "AppController.h"
 
-#include <QGuiApplication>
+#include <QApplication>
 #include <QIcon>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
@@ -8,15 +8,17 @@
 #include <QSystemTrayIcon>
 #include <QMenu>
 #include <QAction>
+#include <QStyle>
 
 int main(int argc, char *argv[]) {
-    QGuiApplication app(argc, argv);
+    // QSystemTrayIcon / QMenu 属于 QtWidgets，必须用 QApplication
+    QApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("dsh-Berth"));
     QGuiApplication::setOrganizationName(QStringLiteral("dsh-Berth"));
     QGuiApplication::setApplicationDisplayName(QStringLiteral("DSH Berth"));
     QGuiApplication::setApplicationVersion(QStringLiteral(BERTH_VERSION));
     QGuiApplication::setQuitOnLastWindowClosed(false);
-    QQuickStyle::setStyle(QStringLiteral("Basic"));
+    QQuickStyle::setStyle(QStringLiteral("Windows"));
 
     AppController controller;
     QQmlApplicationEngine engine;
@@ -29,11 +31,17 @@ int main(int argc, char *argv[]) {
     QMenu trayMenu;
     QAction *showAction = trayMenu.addAction(QStringLiteral("打开 DSH Berth"));
     QAction *quitAction = trayMenu.addAction(QStringLiteral("退出"));
-    QSystemTrayIcon tray;
+    // 托盘图标必须设置 icon，否则 Qt 拒绝显示，关窗后就再也没有退出入口
+    const QIcon appIcon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
+    QApplication::setWindowIcon(appIcon);
+    QSystemTrayIcon tray(appIcon);
     tray.setToolTip(QStringLiteral("DSH Berth"));
     tray.setContextMenu(&trayMenu);
     if (QSystemTrayIcon::isSystemTrayAvailable())
         tray.show();
+    // 托盘没能显示时，关闭窗口就直接退出，避免进程隐身残留
+    if (!tray.isVisible())
+        QGuiApplication::setQuitOnLastWindowClosed(true);
 
     QObject::connect(showAction, &QAction::triggered, &engine, [&engine]() {
         const auto roots = engine.rootObjects();

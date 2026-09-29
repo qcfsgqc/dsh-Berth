@@ -15,9 +15,13 @@
 Supervisor::Supervisor(QObject *parent) : QObject(parent) {}
 
 Supervisor::~Supervisor() {
+    // 析构时不再发 statusChanged，只管把进程树杀干净
     const auto ids = m_processes.keys();
     for (const QString &id : ids)
-        stop(id);
+        killTree(id, m_processes.take(id));
+    const auto jobIds = m_jobs.keys();
+    for (const QString &id : jobIds)
+        releaseJob(id);
 }
 
 void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
@@ -60,6 +64,8 @@ void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
     });
     connect(process, &QProcess::finished, this, [this, id = instance.id](int code, QProcess::ExitStatus status) {
         m_processes.remove(id);
+        // dsh 自己退出时，顺手清掉它留下的子进程
+        releaseJob(id);
         if (auto *timer = m_probes.take(id))
             timer->deleteLater();
         const QString error = status == QProcess::CrashExit
@@ -77,6 +83,7 @@ void Supervisor::start(const Instance &instance, const QString &dshExecutable) {
         return;
     }
     m_processes.insert(instance.id, process);
+    attachJob(instance.id, process);
     emit statusChanged(instance.id, QStringLiteral("starting"), process->processId(), {});
     probe(instance.id, instance.port);
 }
@@ -85,14 +92,66 @@ void Supervisor::stop(const QString &id) {
     auto *process = m_processes.take(id);
     if (auto *timer = m_probes.take(id))
         timer->deleteLater();
-    if (!process)
+    if (!process) {
+        releaseJob(id);
         return;
+    }
     emit statusChanged(id, QStringLiteral("stopping"), process->processId(), {});
-    process->terminate();
-    if (!process->waitForFinished(3000))
-        process->kill();
-    process->deleteLater();
+    killTree(id, process);
     emit statusChanged(id, QStringLiteral("stopped"), 0, {});
+}
+
+void Supervisor::attachJob(const QString &id, QProcess *process) {
+#ifdef Q_OS_WIN
+    // KILL_ON_JOB_CLOSE：句柄关闭（包括 Berth 崩溃/被杀）时，系统连带结束整棵进程树
+    HANDLE job = CreateJobObjectW(nullptr, nullptr);
+    if (!job)
+        return;
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION info{};
+    info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+    SetInformationJobObject(job, JobObjectExtendedLimitInformation, &info, sizeof(info));
+    HANDLE handle = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE,
+                                static_cast<DWORD>(process->processId()));
+    if (handle && AssignProcessToJobObject(job, handle))
+        m_jobs.insert(id, job);
+    else
+        CloseHandle(job);
+    if (handle)
+        CloseHandle(handle);
+#else
+    Q_UNUSED(id);
+    Q_UNUSED(process);
+#endif
+}
+
+void Supervisor::releaseJob(const QString &id) {
+#ifdef Q_OS_WIN
+    if (void *job = m_jobs.take(id))
+        CloseHandle(static_cast<HANDLE>(job));
+#else
+    Q_UNUSED(id);
+#endif
+}
+
+void Supervisor::killTree(const QString &id, QProcess *process) {
+    if (!process) {
+        releaseJob(id);
+        return;
+    }
+    // 先断开信号，避免主动停止被 finished 回调误报成 failed
+    process->disconnect(this);
+#ifdef Q_OS_WIN
+    // dsh 可能是 .cmd 包装，真正占端口的是子进程 node；只杀直接子进程会留下孤儿
+    if (void *job = m_jobs.take(id)) {
+        TerminateJobObject(static_cast<HANDLE>(job), 1);
+        CloseHandle(static_cast<HANDLE>(job));
+    }
+#endif
+    if (process->state() != QProcess::NotRunning) {
+        process->kill();
+        process->waitForFinished(3000);
+    }
+    process->deleteLater();
 }
 
 bool Supervisor::isRunning(const QString &id) const {

@@ -24,7 +24,12 @@ signals:
 private:
     void probe(const QString &id, int port);
     void attachProcess(const QString &id, QProcess *process);
+    void attachJob(const QString &id, QProcess *process);
+    void releaseJob(const QString &id);
+    void killTree(const QString &id, QProcess *process);
 
     QHash<QString, QProcess *> m_processes;
     QHash<QString, QTimer *> m_probes;
+    // Windows Job Object 句柄（HANDLE），用来连带子孙进程一起结束
+    QHash<QString, void *> m_jobs;
 };

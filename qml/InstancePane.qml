@@ -1,9 +1,17 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Windows
 import QtQuick.Layouts
 
 Item {
     id: pane
+
+    // 状态色：运行绿、过渡橙、失败红、停止灰
+    function statusColor(s) {
+        if (s === "running") return "#107c10"
+        if (s === "starting" || s === "stopping") return "#ca5010"
+        if (s === "failed") return "#c42b1c"
+        return "#666666"
+    }
 
     RowLayout {
         anchors.fill: parent
@@ -14,8 +22,9 @@ Item {
             Layout.preferredWidth: 280
             Layout.fillHeight: true
             color: "#ffffff"
-            border.color: "#000000"
+            border.color: "#e5e5e5"
             border.width: 1
+            radius: 4
 
             ColumnLayout {
                 anchors.fill: parent
@@ -49,6 +58,7 @@ Item {
                     model: berth.instances
                     currentIndex: -1
                     delegate: ItemDelegate {
+                        id: row
                         width: list.width
                         required property string id
                         required property string name
@@ -61,14 +71,26 @@ Item {
                             list.currentIndex = index
                             pane.selectedId = id
                         }
+                        background: Rectangle {
+                            radius: 4
+                            color: row.highlighted ? "#cce4f7" : row.hovered ? "#eef4fc" : "transparent"
+                        }
                         contentItem: Column {
                             spacing: 2
-                            Label { text: name; color: highlighted ? "#ffffff" : "#000000"; font.pixelSize: 14 }
-                            Label {
-                                text: profile + "  ·  " + port + "  ·  " + berth.statusText(status)
-                                color: highlighted ? "#ffffff" : "#000000"
-                                font.pixelSize: 12
-                                font.bold: status === "running"
+                            Label { text: name; font.pixelSize: 14 }
+                            Row {
+                                spacing: 6
+                                Label {
+                                    text: profile + "  ·  " + port + "  ·"
+                                    color: "#555555"
+                                    font.pixelSize: 12
+                                }
+                                Label {
+                                    text: berth.statusText(status)
+                                    color: pane.statusColor(status)
+                                    font.pixelSize: 12
+                                    font.bold: status === "running"
+                                }
                             }
                         }
                     }
@@ -80,8 +102,9 @@ Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
             color: "#ffffff"
-            border.color: "#000000"
+            border.color: "#e5e5e5"
             border.width: 1
+            radius: 4
 
             ColumnLayout {
                 anchors.fill: parent
@@ -91,19 +114,18 @@ Item {
 
                 Label {
                     text: nameField.text.length ? nameField.text : "未选择"
-                    color: "#000000"
                     font.pixelSize: 20
                     font.bold: true
                 }
                 Label {
                     text: berth.statusText(pane.currentStatus) + (pane.currentPid > 0 ? "  ·  pid " + pane.currentPid : "")
-                    color: "#000000"
+                    color: pane.statusColor(pane.currentStatus)
                     font.bold: pane.currentStatus === "running"
                 }
                 Label {
                     visible: pane.currentError.length > 0
                     text: pane.currentError
-                    color: "#000000"
+                    color: "#c42b1c"
                     font.bold: true
                     wrapMode: Text.Wrap
                     Layout.fillWidth: true
@@ -114,11 +136,11 @@ Item {
                     columnSpacing: 12
                     rowSpacing: 8
                     Layout.fillWidth: true
-                    Label { text: "名称"; color: "#000000" }
-                    TextField { id: nameField; Layout.fillWidth: true; placeholderText: "泊位名"; color: "#000000" }
-                    Label { text: "端口"; color: "#000000" }
-                    TextField { id: portField; Layout.fillWidth: true; placeholderText: "3080"; inputMethodHints: Qt.ImhDigitsOnly; color: "#000000" }
-                    Label { text: "Profile"; color: "#000000" }
+                    Label { text: "名称" }
+                    TextField { id: nameField; Layout.fillWidth: true; placeholderText: "泊位名" }
+                    Label { text: "端口" }
+                    TextField { id: portField; Layout.fillWidth: true; placeholderText: "3080"; inputMethodHints: Qt.ImhDigitsOnly }
+                    Label { text: "Profile" }
                     ComboBox {
                         id: profileBox
                         Layout.fillWidth: true
@@ -127,16 +149,15 @@ Item {
                         onEditTextChanged: profileField.text = editText
                     }
                     TextField { id: profileField; visible: false }
-                    Label { text: "DSH_HOME"; color: "#000000" }
+                    Label { text: "DSH_HOME" }
                     TextField {
                         id: homeField
                         Layout.fillWidth: true
                         placeholderText: "留空则用默认 ~/.dsh"
-                        color: "#000000"
                         onEditingFinished: profileBox.model = berth.detectProfiles(text)
                     }
-                    Label { text: "工作区"; color: "#000000" }
-                    TextField { id: workspaceField; Layout.fillWidth: true; placeholderText: "启动时的工作目录"; color: "#000000" }
+                    Label { text: "工作区" }
+                    TextField { id: workspaceField; Layout.fillWidth: true; placeholderText: "启动时的工作目录" }
                     Item {}
                     CheckBox { id: autoBox; text: "打开控台时自动启动" }
                 }
@@ -169,7 +190,7 @@ Item {
                 anchors.centerIn: parent
                 visible: pane.selectedId.length === 0
                 text: "新建泊位，或识别已有 dsh profile"
-                color: "#000000"
+                color: "#666666"
             }
         }
     }
