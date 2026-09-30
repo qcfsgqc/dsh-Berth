@@ -20,7 +20,8 @@ public:
         StatusRole,
         PidRole,
         LastErrorRole,
-        LogPathRole
+        LogPathRole,
+        StatusTextRole
     };
     Q_ENUM(Roles)
 
@@ -39,6 +40,9 @@ public:
     void remove(const QString &id);
     Instance item(const QString &id) const;
     bool containsPort(int port, const QString &exceptId = {}) const;
+
+    // 状态字符串 → 中文显示文字（卡片、托盘等处统一使用）
+    static QString statusText(const QString &status);
 
 private:
     int indexOf(const QString &id) const;

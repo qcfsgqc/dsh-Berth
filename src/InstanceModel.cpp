@@ -24,6 +24,7 @@ QVariant InstanceModel::data(const QModelIndex &index, int role) const {
     case PidRole: return item.pid;
     case LastErrorRole: return item.lastError;
     case LogPathRole: return item.logPath;
+    case StatusTextRole: return statusText(item.status);
     default: return {};
     }
 }
@@ -40,8 +41,25 @@ QHash<int, QByteArray> InstanceModel::roleNames() const {
         {StatusRole, "status"},
         {PidRole, "pid"},
         {LastErrorRole, "lastError"},
-        {LogPathRole, "logPath"}
+        {LogPathRole, "logPath"},
+        {StatusTextRole, "statusText"}
     };
+}
+
+QString InstanceModel::statusText(const QString &status) {
+    if (status == QLatin1String("running"))
+        return QStringLiteral("运行中");
+    if (status == QLatin1String("starting"))
+        return QStringLiteral("启动中");
+    if (status == QLatin1String("stopping"))
+        return QStringLiteral("停止中");
+    if (status == QLatin1String("failed"))
+        return QStringLiteral("失败");
+    if (status == QLatin1String("external"))
+        return QStringLiteral("运行中（外部）");
+    if (status == QLatin1String("crashStopped"))
+        return QStringLiteral("崩溃已停止");
+    return QStringLiteral("已停止");
 }
 
 QList<Instance> InstanceModel::items() const { return m_items; }

@@ -8,12 +8,23 @@ Item {
     // dsh 检查/更新结果反馈（三个 finished 信号共用）
     property bool dshResultOk: true
     property string dshResultText: ""
+    // 开机自启开关写注册表失败时的原因
+    property string autostartError: ""
+    // 插件目录地址校验失败的原因
+    property string catalogUrlError: ""
+
+    // 内容较多，整页可滚动
+    ScrollView {
+        id: scroll
+        anchors.fill: parent
+        contentWidth: availableWidth
 
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: 24
+        x: 24
         spacing: 14
-        width: Math.min(parent.width - 48, 640)
+        width: Math.min(scroll.availableWidth - 48, 640)
+
+        Item { implicitHeight: 10 }
 
         Label {
             text: "设置"
@@ -46,6 +57,27 @@ Item {
                 placeholderText: "留空则用 PATH。需要 ^22.19 或 >=24"
                 onEditingFinished: berth.settings.nodeExecutable = text
             }
+            Label { text: "插件目录地址" }
+            TextField {
+                id: catalogUrlField
+                Layout.fillWidth: true
+                text: berth.settings.catalogUrl
+                placeholderText: "https://dsh-plug.in/api/plugins.json"
+                onEditingFinished: {
+                    pane.catalogUrlError = berth.settings.setCatalogUrl(text)
+                    // 不合法时保留原值
+                    if (pane.catalogUrlError.length > 0)
+                        text = berth.settings.catalogUrl
+                }
+            }
+            Item { visible: pane.catalogUrlError.length > 0 }
+            Label {
+                visible: pane.catalogUrlError.length > 0
+                text: "地址未保存：" + pane.catalogUrlError
+                color: "#c42b1c"
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
             Label { text: "数据目录" }
             Label {
                 text: berth.settings.dataDir
@@ -75,7 +107,24 @@ Item {
         }
 
         CheckBox {
-            text: "启动时最小化到托盘"
+            id: autostartBox
+            text: "开机自启 Berth"
+            // 按注册表实际状态显示；写入失败时 registeredChanged 把开关拉回原状态
+            checked: berth.autostart.registered
+            onToggled: {
+                pane.autostartError = berth.autostart.apply(checked)
+                checked = Qt.binding(function() { return berth.autostart.registered })
+            }
+        }
+        Label {
+            visible: pane.autostartError.length > 0
+            text: pane.autostartError
+            color: "#c42b1c"
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+        CheckBox {
+            text: "开机自启时最小化到托盘"
             checked: berth.settings.startMinimized
             onToggled: berth.settings.startMinimized = checked
         }
@@ -83,6 +132,113 @@ Item {
             text: "实例就绪后打开界面"
             checked: berth.settings.openUiOnStart
             onToggled: berth.settings.openUiOnStart = checked
+        }
+        CheckBox {
+            text: "为运行中泊位显示独立托盘图标"
+            checked: berth.settings.trayInstanceIcons
+            onToggled: berth.settings.trayInstanceIcons = checked
+        }
+        CheckBox {
+            text: "关闭窗口时最小化到托盘"
+            checked: berth.settings.closeToTray
+            onToggled: berth.settings.closeToTray = checked
+        }
+        RowLayout {
+            spacing: 12
+            Label { text: "系统通知" }
+            CheckBox {
+                text: "崩溃"
+                checked: berth.settings.notifyCrash
+                onToggled: berth.settings.notifyCrash = checked
+            }
+            CheckBox {
+                text: "就绪"
+                checked: berth.settings.notifyReady
+                onToggled: berth.settings.notifyReady = checked
+            }
+            CheckBox {
+                text: "更新"
+                checked: berth.settings.notifyUpdate
+                onToggled: berth.settings.notifyUpdate = checked
+            }
+        }
+        // 更新检查间隔（需求 14.2）：1–168 小时，取消勾选即关闭（updateCheckHours = 0）
+        RowLayout {
+            spacing: 12
+            CheckBox {
+                id: updateCheckBox
+                text: "定期检查更新，间隔（小时）"
+                checked: berth.settings.updateCheckHours > 0
+                onToggled: berth.settings.updateCheckHours = checked ? Math.max(1, updateHoursSpin.value) : 0
+            }
+            SpinBox {
+                id: updateHoursSpin
+                from: 1
+                to: 168
+                editable: true
+                enabled: updateCheckBox.checked
+                value: berth.settings.updateCheckHours > 0 ? berth.settings.updateCheckHours : 24
+                onValueModified: berth.settings.updateCheckHours = value
+            }
+        }
+        RowLayout {
+            spacing: 12
+            Label { text: "批量启动错峰间隔（秒）" }
+            SpinBox {
+                from: 0
+                to: 60
+                editable: true
+                value: berth.settings.staggerSec
+                onValueModified: berth.settings.staggerSec = value
+            }
+        }
+        Label {
+            text: "批量启动与开机自启的泊位按此间隔依次发起，0 表示不间隔。"
+            color: "#666666"
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+        Label {
+            text: "崩溃自动重启"
+            font.bold: true
+        }
+        GridLayout {
+            columns: 2
+            columnSpacing: 12
+            rowSpacing: 8
+            Label { text: "基础间隔（秒）" }
+            SpinBox {
+                from: 1
+                to: 60
+                editable: true
+                value: berth.settings.autoRestartBaseSec
+                onValueModified: berth.settings.autoRestartBaseSec = value
+            }
+            Label { text: "最大间隔（秒）" }
+            SpinBox {
+                // 不小于基础间隔，不超过 600 秒
+                from: berth.settings.autoRestartBaseSec
+                to: 600
+                editable: true
+                value: berth.settings.autoRestartMaxSec
+                onValueModified: berth.settings.autoRestartMaxSec = value
+            }
+            Label { text: "连续重启上限（次）" }
+            SpinBox {
+                from: 1
+                to: 20
+                editable: true
+                value: berth.settings.autoRestartMaxAttempts
+                onValueModified: berth.settings.autoRestartMaxAttempts = value
+            }
+        }
+        Label {
+            text: "第 n 次重启前等待 min(2^(n-1) × 基础间隔, 最大间隔)；连续运行满 120 秒后计数清零。开关在各泊位的编辑页里。"
+            color: "#666666"
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
         }
         Label {
             text: "dsh 安装与更新"
@@ -142,16 +298,24 @@ Item {
             wrapMode: Text.Wrap
             Layout.fillWidth: true
         }
+        ProxySettings { Layout.fillWidth: true }
+        ModelPriceEditor { Layout.fillWidth: true }
         Button {
             text: "保存设置"
+            // settings.json 只读模式（schema 过高或损坏）时禁止保存
+            enabled: !berth.settings.readOnly
             onClicked: berth.settings.save()
         }
-        Item { Layout.fillHeight: true }
+        Item { implicitHeight: 24 }
+    }
     }
 
     // 进入设置页时刷新一次本地与 npm 上的版本
     Component.onCompleted: {
         pane.dshResultText = ""
+        pane.autostartError = ""
+        pane.catalogUrlError = ""
+        berth.autostart.refresh()
         berth.dshUpdate.checkInstalled()
         berth.dshUpdate.checkLatest()
     }

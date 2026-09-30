@@ -28,6 +28,9 @@ ApplicationWindow {
 
     function showWindow() {
         visible = true
+        // 已最小化时先还原（托盘单击等场景要求还原并前置，不另开窗口）
+        if (visibility === Window.Minimized)
+            showNormal()
         raise()
         requestActivate()
     }
