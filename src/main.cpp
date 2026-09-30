@@ -9,11 +9,11 @@
 #include <QMenu>
 #include <QAction>
 #include <QStyle>
-#include <QtWebEngineQuick/qtwebenginequickglobal.h>
+#include <QtWebView/QtWebView>
 
 int main(int argc, char *argv[]) {
-    // WebEngine 必须在创建 QApplication 之前初始化
-    QtWebEngineQuick::initialize();
+    // QtWebView 必须在创建 QApplication 之前初始化（WebView2 后端）
+    QtWebView::initialize();
     // QSystemTrayIcon / QMenu 属于 QtWidgets，必须用 QApplication
     QApplication app(argc, argv);
     QGuiApplication::setApplicationName(QStringLiteral("dsh-Berth"));
@@ -35,7 +35,7 @@ int main(int argc, char *argv[]) {
     QAction *showAction = trayMenu.addAction(QStringLiteral("打开 DSH Berth"));
     QAction *quitAction = trayMenu.addAction(QStringLiteral("退出"));
     // 托盘图标必须设置 icon，否则 Qt 拒绝显示，关窗后就再也没有退出入口
-    const QIcon appIcon = QApplication::style()->standardIcon(QStyle::SP_ComputerIcon);
+    const QIcon appIcon(QStringLiteral(":/assets/berth-logo.png"));
     QApplication::setWindowIcon(appIcon);
     QSystemTrayIcon tray(appIcon);
     tray.setToolTip(QStringLiteral("DSH Berth"));

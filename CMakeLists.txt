@@ -26,13 +26,14 @@ find_package(Qt6 6.10.2 EXACT REQUIRED COMPONENTS
     QuickControls2
     Network
     Widgets
-    WebEngineQuick
+    WebView
 )
 
 qt_standard_project_setup(REQUIRES 6.10.2)
 
 qt_add_executable(dsh-berth
     WIN32
+    assets/berth.rc
     src/main.cpp
     src/Instance.h
     src/InstanceModel.h
@@ -45,6 +46,11 @@ qt_add_executable(dsh-berth
     src/AppController.cpp
     src/PluginOps.h
     src/PluginOps.cpp
+)
+
+qt_add_resources(dsh-berth "berth_icons"
+    PREFIX "/"
+    FILES assets/berth-logo.png
 )
 
 qt_add_qml_module(dsh-berth
@@ -68,7 +74,7 @@ target_link_libraries(dsh-berth PRIVATE
     Qt6::QuickControls2
     Qt6::Network
     Qt6::Widgets
-    Qt6::WebEngineQuick
+    Qt6::WebView
 )
 
 target_compile_definitions(dsh-berth PRIVATE

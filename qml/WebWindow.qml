@@ -1,9 +1,9 @@
 import QtQuick
 import QtQuick.Controls.Windows
 import QtQuick.Layouts
-import QtWebEngine
+import QtWebView
 
-// 单个泊位的 Web 界面窗口，内嵌 Qt WebEngine 加载 dsh web（带 token 的地址）
+// 单个泊位的 Web 界面窗口，内嵌 WebView2（QtWebView）加载 dsh web（带 token 的地址）
 ApplicationWindow {
     id: webWin
     property string instanceId: ""
@@ -73,12 +73,9 @@ ApplicationWindow {
         }
     }
 
-    WebEngineView {
+    // 外链要求开新窗口的行为交给 WebView2 默认处理（QtWebView 无 newWindowRequested 信号）
+    WebView {
         id: view
         anchors.fill: parent
-        // 页面要求开新窗口（外链等）时交给系统浏览器
-        onNewWindowRequested: function(request) {
-            Qt.openUrlExternally(request.requestedUrl)
-        }
     }
 }

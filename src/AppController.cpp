@@ -63,6 +63,33 @@ QString AppController::createInstance() {
     return item.id;
 }
 
+QString AppController::createInstanceFrom(const QString &sourceId) {
+    const Instance src = m_instances.item(sourceId);
+    Instance item;
+    if (!src.id.isEmpty()) {
+        item.name = src.name + QStringLiteral(" - 副本");
+        item.port = 3080;
+        while (m_instances.containsPort(item.port))
+            item.port += 1;
+        item.profile = src.profile;
+        item.dshHome = src.dshHome;
+        item.workspace = src.workspace;
+        item.autostart = src.autostart;
+    } else {
+        item.name = QStringLiteral("泊位 %1").arg(m_instances.rowCount() + 1);
+        item.port = 3080;
+        while (m_instances.containsPort(item.port))
+            item.port += 1;
+        item.profile = QStringLiteral("web");
+    }
+    item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    item.status = QStringLiteral("stopped");
+    item.logPath = m_settings.dataDir() + QStringLiteral("/logs/") + item.id + QStringLiteral(".log");
+    m_instances.upsert(item);
+    save();
+    return item.id;
+}
+
 void AppController::removeInstance(const QString &id) {
     if (m_supervisor.isRunning(id))
         m_supervisor.stop(id);

@@ -4,7 +4,7 @@
 
 - 显示名：DSH Berth
 - 可执行文件：`dsh-berth`
-- Qt：6.10.2（精确版本），需要 Qt WebEngine 模块（Maintenance Tool 里勾选 Qt WebEngine、Qt WebChannel、Qt Positioning）
+- Qt：6.10.2（精确版本），需要 Qt WebView 模块（Maintenance Tool 里勾选 Qt WebView；运行依赖 Edge WebView2 Runtime，Win11 自带）
 
 - 当前平台：仅 Windows
 

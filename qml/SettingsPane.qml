@@ -15,7 +15,7 @@ Item {
             font.bold: true
         }
         Label {
-            text: "控台负责拉起 dsh web，官方界面在内嵌窗口（Qt WebEngine）里打开。"
+            text: "控台负责拉起 dsh web，官方界面在内嵌窗口（WebView2）里打开。"
             color: "#555555"
             wrapMode: Text.Wrap
             Layout.fillWidth: true

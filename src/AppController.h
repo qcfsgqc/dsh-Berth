@@ -25,6 +25,8 @@ public:
     QString version() const;
 
     Q_INVOKABLE QString createInstance();
+    // 从已有泊位复制配置新建（端口自动避让，id/状态/日志路径重新生成）
+    Q_INVOKABLE QString createInstanceFrom(const QString &sourceId);
     Q_INVOKABLE void removeInstance(const QString &id);
     Q_INVOKABLE void updateInstance(const QString &id, const QString &name, int port,
                                     const QString &profile, const QString &dshHome,
@@ -32,7 +34,7 @@ public:
     Q_INVOKABLE void startInstance(const QString &id);
     Q_INVOKABLE void stopInstance(const QString &id);
     Q_INVOKABLE void restartInstance(const QString &id);
-    // 在内嵌 WebEngine 窗口里打开（发 uiRequested 给 QML）
+    // 在内嵌 WebView2 窗口里打开（发 uiRequested 给 QML）
     Q_INVOKABLE void openUi(const QString &id);
     Q_INVOKABLE void openInBrowser(const QString &id);
     // 带 token 的界面地址；本次运行还没打印时退回 http://127.0.0.1:<port>/

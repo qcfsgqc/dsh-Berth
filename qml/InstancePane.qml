@@ -34,9 +34,10 @@ Item {
                     text: "新建泊位"
                     Layout.fillWidth: true
                     onClicked: {
-                        const id = berth.createInstance()
-                        list.currentIndex = berth.instances.rowCount() - 1
-                        pane.selectedId = id
+                        if (berth.instances.rowCount() === 0)
+                            pane.doCreate("")
+                        else
+                            newDialog.open()
                     }
                 }
                 Button {
@@ -273,10 +274,98 @@ Item {
 
     PluginsDialog { id: pluginsDialog }
 
+    // 新建泊位：询问空白新建，还是从某个已有泊位复制配置
+    Dialog {
+        id: newDialog
+        modal: true
+        parent: Overlay.overlay
+        anchors.centerIn: parent
+        width: Math.min(400, parent ? parent.width - 48 : 400)
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        title: "新建泊位"
+
+        onOpened: blankRadio.checked = true
+
+        contentItem: ColumnLayout {
+            spacing: 8
+
+            ButtonGroup { id: newModeGroup }
+
+            RadioButton {
+                id: blankRadio
+                ButtonGroup.group: newModeGroup
+                text: "空白新建"
+                checked: true
+            }
+            Label {
+                text: "默认 profile「web」，端口自动分配"
+                color: "#555555"
+                font.pixelSize: 12
+                Layout.leftMargin: 32
+            }
+
+            RadioButton {
+                id: copyRadio
+                ButtonGroup.group: newModeGroup
+                text: "从已有泊位复制配置"
+                enabled: copyBox.count > 0
+            }
+            ComboBox {
+                id: copyBox
+                enabled: copyRadio.checked
+                Layout.fillWidth: true
+                Layout.leftMargin: 32
+                textRole: "name"
+                model: berth.instances
+                onActivated: copyRadio.checked = true
+                delegate: ItemDelegate {
+                    id: copyItem
+                    required property var model
+                    required property int index
+                    width: copyBox.width
+                    highlighted: copyBox.highlightedIndex === index
+                    contentItem: Column {
+                        spacing: 1
+                        Label { text: copyItem.model.name; font.pixelSize: 13 }
+                        Label {
+                            text: copyItem.model.profile + "  ·  端口 " + copyItem.model.port
+                            color: "#555555"
+                            font.pixelSize: 12
+                        }
+                    }
+                }
+            }
+            Label {
+                text: "复制名称（加“ - 副本”）、profile、DSH_HOME、工作区与自动启动；端口重新分配，从停止状态开始"
+                color: "#555555"
+                font.pixelSize: 12
+                Layout.leftMargin: 32
+                wrapMode: Text.Wrap
+                Layout.fillWidth: true
+            }
+        }
+
+        onAccepted: {
+            if (blankRadio.checked || copyBox.count === 0) {
+                pane.doCreate("")
+            } else {
+                const idx = copyBox.currentIndex
+                pane.doCreate(berth.instances.data(berth.instances.index(idx, 0), 257))
+            }
+        }
+    }
+
     property string selectedId: ""
     property string currentStatus: "stopped"
     property int currentPid: 0
     property string currentError: ""
+
+    // 新建：sourceId 为空则空白新建，否则从该泊位复制配置
+    function doCreate(sourceId) {
+        const id = berth.createInstanceFrom(sourceId)
+        list.currentIndex = berth.instances.rowCount() - 1
+        pane.selectedId = id
+    }
 
     function syncForm() {
         if (!selectedId)
