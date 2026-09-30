@@ -1,5 +1,6 @@
 #include "AppController.h"
 #include "PluginOps.h"
+#include "ProfileOps.h"
 
 #include <QDesktopServices>
 #include <QDir>
@@ -35,12 +36,20 @@ QString tailLines(const QString &text, int maxLines) {
 }
 
 AppController::AppController(QObject *parent)
-    : QObject(parent), m_instances(this), m_settings(this), m_supervisor(this) {
+    : QObject(parent), m_instances(this), m_settings(this), m_supervisor(this),
+      m_profileTree(this), m_dshUpdate(this) {
     connect(&m_supervisor, &Supervisor::statusChanged, this, &AppController::applyStatus);
+    m_dshUpdate.setSettings(&m_settings);
+    // 泊位列表任何变化都全量重建树（泊位数量级小，整树重建开销可忽略）
+    connect(&m_instances, &InstanceModel::dataChanged, this, [this]() { rebuildTree(); });
+    connect(&m_instances, &InstanceModel::rowsInserted, this, [this]() { rebuildTree(); });
+    connect(&m_instances, &InstanceModel::rowsRemoved, this, [this]() { rebuildTree(); });
+    connect(&m_instances, &InstanceModel::modelReset, this, [this]() { rebuildTree(); });
     load();
     refreshProfiles();
     if (m_instances.rowCount() == 0 && !m_knownProfiles.isEmpty())
         importDetectedProfiles();
+    rebuildTree();
 }
 
 InstanceModel *AppController::instances() { return &m_instances; }
@@ -276,6 +285,15 @@ QVariantMap AppController::listPlugins(const QString &id) const {
     return PluginOps::readPlugins(dir);
 }
 
+QVariantMap AppController::listPluginsForProfile(const QString &home, const QString &profile) const {
+    const QString dir = profileDirForHome(home, profile);
+    return PluginOps::readPlugins(dir);
+}
+
+bool AppController::profileBusy() const {
+    return m_profileBusy;
+}
+
 bool AppController::pluginBusy() const {
     return m_pluginBusy;
 }
@@ -287,28 +305,120 @@ void AppController::setPluginBusy(bool busy) {
     emit pluginBusyChanged();
 }
 
-void AppController::uninstallPlugin(const QString &id, const QString &name, bool removePackage) {
-    // 1. 已有卸载在进行
-    if (m_pluginBusy)
+void AppController::setProfileBusy(bool busy) {
+    if (m_profileBusy == busy)
         return;
+    m_profileBusy = busy;
+    emit profileBusyChanged();
+}
 
-    const Instance target = m_instances.item(id);
-    if (target.id.isEmpty()) {
-        emit pluginUninstallFinished(id, false, QStringLiteral("找不到泊位"));
-        return;
-    }
+void AppController::uninstallPlugin(const QString &id, const QString &name, bool removePackage) {
     QString error;
     const QString dir = profileDirFor(id, &error);
     if (dir.isEmpty()) {
         emit pluginUninstallFinished(id, false, error);
         return;
     }
+    const Instance target = m_instances.item(id);
+    if (target.id.isEmpty()) {
+        emit pluginUninstallFinished(id, false, QStringLiteral("找不到泊位"));
+        return;
+    }
+    uninstallFromProfile(id, target.dshHome, target.profile, name, removePackage);
+}
 
-    // 2. 同一 DSH_HOME + profile 的泊位必须都已停止
-    const QString home = resolveHome(target.dshHome);
+void AppController::uninstallPluginForProfile(const QString &home, const QString &profile,
+                                              const QString &name, bool removePackage) {
+    // id 为空：按 (home, profile) 直接操作，结果信号照发 pluginUninstallFinished（id 为空串）
+    uninstallFromProfile(QString(), home, profile, name, removePackage);
+}
+
+QStringList AppController::detectProfiles(const QString &dshHome) const {
+    const QString home = resolveHome(dshHome);
+    QDir dir(home + QStringLiteral("/profiles"));
+    if (!dir.exists())
+        return {};
+    QStringList names;
+    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
+    for (const QFileInfo &info : entries) {
+        const QString path = info.absoluteFilePath();
+        if (QFile::exists(path + QStringLiteral("/package.json"))
+            || QFile::exists(path + QStringLiteral("/cordis.patch.yml")))
+            names.push_back(info.fileName());
+    }
+    return names;
+}
+
+QStringList AppController::knownProfiles() const {
+    return m_knownProfiles;
+}
+
+void AppController::refreshProfiles() {
+    const QStringList found = detectProfiles({});
+    if (found != m_knownProfiles) {
+        m_knownProfiles = found;
+        emit profilesChanged();
+    }
+    rebuildTree();
+}
+
+int AppController::importDetectedProfiles() {
+    refreshProfiles();
+    const QString home = defaultDshHome();
+    int added = 0;
+    for (const QString &name : m_knownProfiles) {
+        bool exists = false;
+        for (const Instance &item : m_instances.items()) {
+            if (item.profile == name && resolveHome(item.dshHome) == home) {
+                exists = true;
+                break;
+            }
+        }
+        if (exists)
+            continue;
+        Instance item;
+        item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+        int port = 3080;
+        while (m_instances.containsPort(port))
+            port += 1;
+        item.port = port;
+        item.name = name;
+        item.profile = name;
+        item.dshHome = home;
+        item.status = QStringLiteral("stopped");
+        item.logPath = m_settings.dataDir() + QStringLiteral("/logs/") + item.id + QStringLiteral(".log");
+        m_instances.upsert(item);
+        ++added;
+    }
+    if (added > 0)
+        save();
+    emit notice(added > 0
+                    ? QStringLiteral("已识别 %1 个 profile，新增 %2 个泊位").arg(m_knownProfiles.size()).arg(added)
+                    : QStringLiteral("已识别 %1 个 profile，没有新泊位").arg(m_knownProfiles.size()));
+    return added;
+}
+
+QString AppController::profileDirForHome(const QString &home, const QString &profile) const {
+    return resolveHome(home) + QStringLiteral("/profiles/") + profile;
+}
+
+// 卸载插件共用流程（id 为空表示按 (home, profile) 直接操作）：
+// 1. 忙 / 引用泊位在跑就拒绝；2. 有 pnpm 才能拆包；3. 先改 bundles 再跑 dsh plugin remove
+void AppController::uninstallFromProfile(const QString &id, const QString &home, const QString &profile,
+                                         const QString &name, bool removePackage) {
+    // 1. 已有卸载或其它 profile 包操作在进行
+    if (m_pluginBusy || m_profileBusy) {
+        emit pluginUninstallFinished(id, false, QStringLiteral("有其它 profile 操作在进行"));
+        return;
+    }
+
+    const QString resolvedHome = resolveHome(home);
+    const QString dir = resolvedHome + QStringLiteral("/profiles/") + profile;
+
+    // 2. 同一 DSH_HOME + profile 的泊位必须都已停止（删包/改 bundles 才不会被进程占用）
     QStringList busyNames;
     for (const Instance &item : m_instances.items()) {
-        if (item.profile != target.profile || resolveHome(item.dshHome) != home)
+        if (item.profile != profile || resolveHome(item.dshHome) != resolvedHome)
             continue;
         if (item.status == QLatin1String("running") || item.status == QLatin1String("starting")
             || item.status == QLatin1String("stopping"))
@@ -327,6 +437,7 @@ void AppController::uninstallPlugin(const QString &id, const QString &name, bool
     }
 
     // 4. 从 dsh.profile.bundles 移除（不在其中时 removeFromBundles 直接成功、不写文件）
+    QString error;
     if (!PluginOps::removeFromBundles(dir, name, &error)) {
         emit pluginUninstallFinished(id, false, error);
         return;
@@ -345,12 +456,12 @@ void AppController::uninstallPlugin(const QString &id, const QString &name, bool
     process->setProgram(m_settings.resolvedDshExecutable());
     process->setArguments({
         QStringLiteral("plugin"),
-        QStringLiteral("--profile"), target.profile,
+        QStringLiteral("--profile"), profile,
         QStringLiteral("remove"), name
     });
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-    if (!target.dshHome.isEmpty())
-        env.insert(QStringLiteral("DSH_HOME"), target.dshHome);
+    if (!resolvedHome.isEmpty())
+        env.insert(QStringLiteral("DSH_HOME"), resolvedHome);
     process->setProcessEnvironment(env);
     process->setWorkingDirectory(dir);
     process->setProcessChannelMode(QProcess::MergedChannels);
@@ -392,68 +503,238 @@ void AppController::uninstallPlugin(const QString &id, const QString &name, bool
     process->start();
 }
 
-QStringList AppController::detectProfiles(const QString &dshHome) const {
-    const QString home = resolveHome(dshHome);
-    QDir dir(home + QStringLiteral("/profiles"));
-    if (!dir.exists())
-        return {};
-    QStringList names;
-    const auto entries = dir.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot, QDir::Name);
-    for (const QFileInfo &info : entries) {
-        const QString path = info.absoluteFilePath();
-        if (QFile::exists(path + QStringLiteral("/package.json"))
-            || QFile::exists(path + QStringLiteral("/cordis.patch.yml")))
-            names.push_back(info.fileName());
-    }
-    return names;
+void AppController::startProfileProcess(const QString &program, const QStringList &args, const QString &dshHome,
+                                        const QString &workingDir, const QString &failPrefix,
+                                        const QString &finishProfileName) {
+    auto *process = new QProcess(this);
+    m_profileProcess = process;
+    m_profileFinishName = finishProfileName;
+    process->setProgram(program);
+    process->setArguments(args);
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    if (!dshHome.isEmpty())
+        env.insert(QStringLiteral("DSH_HOME"), dshHome);
+    process->setProcessEnvironment(env);
+    if (!workingDir.isEmpty())
+        process->setWorkingDirectory(workingDir);
+    process->setProcessChannelMode(QProcess::MergedChannels);
+
+#ifdef Q_OS_WIN
+    process->setCreateProcessArgumentsModifier([](QProcess::CreateProcessArguments *procArgs) {
+        procArgs->flags |= CREATE_NO_WINDOW;
+        procArgs->startupInfo->dwFlags |= STARTF_USESHOWWINDOW;
+        procArgs->startupInfo->wShowWindow = SW_HIDE;
+    });
+#endif
+
+    connect(process, &QProcess::finished, this,
+            [this, process, failPrefix](int code, QProcess::ExitStatus status) {
+        const QString summary = tailLines(QString::fromLocal8Bit(process->readAll()), 20);
+        const bool ok = status == QProcess::NormalExit && code == 0;
+        if (m_profileProcess == process)
+            m_profileProcess = nullptr;
+        process->deleteLater();
+        setProfileBusy(false);
+        // 成功后目录内容已变化（新建/复制出 profile），树的探测结果与 selectedProfile 刷新都依赖它
+        if (ok)
+            refreshProfiles();
+        emit profileOpFinished(ok, ok ? QStringLiteral("完成")
+                                      : failPrefix + (summary.isEmpty() ? QString()
+                                            : QLatin1Char('\n') + summary), m_profileFinishName);
+    });
+    connect(process, &QProcess::errorOccurred, this,
+            [this, process, failPrefix](QProcess::ProcessError err) {
+        if (err != QProcess::FailedToStart)
+            return;
+        const QString reason = process->errorString();
+        if (m_profileProcess == process)
+            m_profileProcess = nullptr;
+        process->deleteLater();
+        setProfileBusy(false);
+        emit profileOpFinished(false, failPrefix + QLatin1Char('\n') + reason, m_profileFinishName);
+    });
+    process->start();
 }
 
-QStringList AppController::knownProfiles() const {
-    return m_knownProfiles;
+QVariantMap AppController::profileInfo(const QString &home, const QString &name) const {
+    return ProfileOps::readProfileInfo(profileDirForHome(home, name));
 }
 
-void AppController::refreshProfiles() {
-    const QStringList found = detectProfiles({});
-    if (found == m_knownProfiles)
+void AppController::createProfile(const QString &name, const QString &fromTemplate) {
+    if (m_profileBusy || m_pluginBusy)
         return;
-    m_knownProfiles = found;
-    emit profilesChanged();
+    const QString trimmed = name.trimmed();
+    const QString invalid = ProfileOps::validateProfileName(trimmed);
+    if (!invalid.isEmpty()) {
+        emit profileOpFinished(false, invalid, trimmed);
+        return;
+    }
+    const QString dir = profileDirForHome({}, trimmed);
+    if (QFileInfo(dir).exists()) {
+        emit profileOpFinished(false, QStringLiteral("目录已存在：%1")
+                                     .arg(QDir::toNativeSeparators(dir)), trimmed);
+        return;
+    }
+    // dsh 的官方创建路径：--from-default-profile 初始化目录，--dump-config 打印配置树即退出，
+    // 不会拉起任何 app（boot-free）
+    setProfileBusy(true);
+    startProfileProcess(m_settings.resolvedDshExecutable(), {
+        QStringLiteral("--profile"), trimmed,
+        QStringLiteral("--from-default-profile"), fromTemplate,
+        QStringLiteral("--dump-config")
+    }, defaultDshHome(), {}, QStringLiteral("profile 创建失败"), trimmed);
 }
 
-int AppController::importDetectedProfiles() {
-    refreshProfiles();
-    const QString home = defaultDshHome();
-    int added = 0;
-    for (const QString &name : m_knownProfiles) {
-        bool exists = false;
-        for (const Instance &item : m_instances.items()) {
-            if (item.profile == name && resolveHome(item.dshHome) == home) {
-                exists = true;
-                break;
-            }
-        }
-        if (exists)
-            continue;
-        Instance item;
-        item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-        int port = 3080;
-        while (m_instances.containsPort(port))
-            port += 1;
-        item.port = port;
-        item.name = name;
-        item.profile = name;
-        item.dshHome = home;
-        item.status = QStringLiteral("stopped");
-        item.logPath = m_settings.dataDir() + QStringLiteral("/logs/") + item.id + QStringLiteral(".log");
-        m_instances.upsert(item);
-        ++added;
+void AppController::deleteProfile(const QString &home, const QString &name) {
+    if (m_profileBusy || m_pluginBusy)
+        return;
+    if (!ProfileOps::validateProfileName(name).isEmpty()) {
+        // 名字不合法通常意味着已不存在，直接按成功收尾让 UI 清掉选中态
+        emit profileOpFinished(true, QString(), name);
+        return;
     }
-    if (added > 0)
-        save();
-    emit notice(added > 0
-                    ? QStringLiteral("已识别 %1 个 profile，新增 %2 个泊位").arg(m_knownProfiles.size()).arg(added)
-                    : QStringLiteral("已识别 %1 个 profile，没有新泊位").arg(m_knownProfiles.size()));
-    return added;
+    const QString resolvedHome = resolveHome(home);
+    const QString dir = resolvedHome + QStringLiteral("/profiles/") + name;
+    // 被任何泊位引用（无论运行与否）都拒绝删除，提示先删泊位
+    QStringList referenced;
+    for (const Instance &item : m_instances.items()) {
+        if (item.profile == name && resolveHome(item.dshHome) == resolvedHome)
+            referenced.push_back(item.name);
+    }
+    if (!referenced.isEmpty()) {
+        emit profileOpFinished(false, QStringLiteral("先删除引用它的泊位：")
+                                     + referenced.join(QStringLiteral("、")), name);
+        return;
+    }
+    QString error;
+    if (!ProfileOps::removeProfileTree(dir, &error)) {
+        emit profileOpFinished(false, error, name);
+        return;
+    }
+    refreshProfiles();
+    emit profileOpFinished(true, QStringLiteral("已删除 profile「%1」").arg(name), name);
+}
+
+void AppController::renameProfile(const QString &home, const QString &oldName, const QString &newName) {
+    if (m_profileBusy || m_pluginBusy)
+        return;
+    const QString renamed = newName.trimmed();
+    if (renamed == oldName) {
+        emit profileOpFinished(true, QString(), renamed);
+        return;
+    }
+    const QString invalid = ProfileOps::validateProfileName(renamed);
+    if (!invalid.isEmpty()) {
+        emit profileOpFinished(false, invalid, oldName);
+        return;
+    }
+    const QString resolvedHome = resolveHome(home);
+    const QString srcDir = resolvedHome + QStringLiteral("/profiles/") + oldName;
+    const QString dstDir = resolvedHome + QStringLiteral("/profiles/") + renamed;
+    if (!QFileInfo(srcDir).isDir()) {
+        emit profileOpFinished(false, QStringLiteral("profile 目录不存在：%1")
+                                     .arg(QDir::toNativeSeparators(srcDir)), oldName);
+        return;
+    }
+    if (QFileInfo(dstDir).exists()) {
+        emit profileOpFinished(false, QStringLiteral("目标目录已存在：%1")
+                                     .arg(QDir::toNativeSeparators(dstDir)), oldName);
+        return;
+    }
+    // 相关泊位在跑时改目录名，进程会占用 node_modules 导致 rename 失败，先拒绝
+    QStringList busyNames;
+    for (const Instance &item : m_instances.items()) {
+        if (item.profile != oldName || resolveHome(item.dshHome) != resolvedHome)
+            continue;
+        if (item.status == QLatin1String("running") || item.status == QLatin1String("starting")
+            || item.status == QLatin1String("stopping"))
+            busyNames.push_back(item.name);
+    }
+    if (!busyNames.isEmpty()) {
+        emit profileOpFinished(false, QStringLiteral("先停止：")
+                                     + busyNames.join(QStringLiteral("、")), oldName);
+        return;
+    }
+    if (!QDir().rename(srcDir, dstDir)) {
+        emit profileOpFinished(false, QStringLiteral("重命名目录失败（可能被占用）"), oldName);
+        return;
+    }
+    // 同步引用它的泊位（instances.json 里存的是 profile 名）
+    for (Instance &item : m_instances.mutableItems()) {
+        if (item.profile == oldName && resolveHome(item.dshHome) == resolvedHome)
+            item.profile = renamed;
+    }
+    refreshProfiles();
+    emit profileOpFinished(true, QStringLiteral("已重命名为「%1」").arg(renamed), renamed);
+}
+
+void AppController::copyProfile(const QString &home, const QString &srcName, const QString &newName) {
+    if (m_profileBusy || m_pluginBusy)
+        return;
+    const QString target = newName.trimmed();
+    const QString invalid = ProfileOps::validateProfileName(target);
+    if (!invalid.isEmpty()) {
+        emit profileOpFinished(false, invalid, srcName);
+        return;
+    }
+    const QString resolvedHome = resolveHome(home);
+    const QString srcDir = resolvedHome + QStringLiteral("/profiles/") + srcName;
+    const QString dstDir = resolvedHome + QStringLiteral("/profiles/") + target;
+    if (!QFileInfo(srcDir).isDir()) {
+        emit profileOpFinished(false, QStringLiteral("profile 目录不存在：%1")
+                                     .arg(QDir::toNativeSeparators(srcDir)), srcName);
+        return;
+    }
+    if (QFileInfo(dstDir).exists()) {
+        emit profileOpFinished(false, QStringLiteral("目标目录已存在：%1")
+                                     .arg(QDir::toNativeSeparators(dstDir)), srcName);
+        return;
+    }
+    QString error;
+    if (!ProfileOps::copyProfileFiles(srcDir, dstDir, &error)) {
+        emit profileOpFinished(false, error, srcName);
+        return;
+    }
+    // 找不到 pnpm 时配置已复制完，不再装依赖（纯 dsh 内置 bundle 的 profile 本就不需要）
+    if (QStandardPaths::findExecutable(QStringLiteral("pnpm")).isEmpty()) {
+        emit profileOpFinished(true, QStringLiteral("已复制配置文件；未找到 pnpm，依赖未重建"), target);
+        return;
+    }
+    // 异步在新目录跑 dsh plugin install（转发 pnpm install），从 lockfile 重建依赖
+    setProfileBusy(true);
+    startProfileProcess(m_settings.resolvedDshExecutable(), {
+        QStringLiteral("plugin"),
+        QStringLiteral("--profile"), target,
+        QStringLiteral("install")
+    }, resolvedHome, dstDir, QStringLiteral("目录已复制，但依赖安装失败"), target);
+}
+
+QString AppController::createInstanceFor(const QString &home, const QString &profile) {
+    Instance item;
+    item.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    int port = 3080;
+    while (m_instances.containsPort(port))
+        port += 1;
+    item.port = port;
+    // 命名沿用「泊位 N」惯例，名字里带上 profile 方便区分
+    item.name = QStringLiteral("%1 · 泊位 %2").arg(profile, QString::number(m_instances.rowCount() + 1));
+    item.profile = profile.trimmed().isEmpty() ? QStringLiteral("web") : profile.trimmed();
+    // 默认 home 的泊位 dshHome 留空，保持数据整洁（resolveHome(空) == defaultHome）
+    item.dshHome = resolveHome(home) == defaultDshHome() ? QString() : resolveHome(home);
+    item.status = QStringLiteral("stopped");
+    item.logPath = m_settings.dataDir() + QStringLiteral("/logs/") + item.id + QStringLiteral(".log");
+    m_instances.upsert(item);
+    save();
+    return item.id;
+}
+
+void AppController::openProfileDir(const QString &home, const QString &name) {
+    const QString dir = profileDirForHome(home, name);
+    if (!QFileInfo(dir).isDir()) {
+        emit notice(QStringLiteral("profile 目录不存在：%1").arg(QDir::toNativeSeparators(dir)));
+        return;
+    }
+    QDesktopServices::openUrl(QUrl::fromLocalFile(dir));
 }
 
 QString AppController::statusText(const QString &status) const {
@@ -466,6 +747,33 @@ QString AppController::statusText(const QString &status) const {
     if (status == QLatin1String("failed"))
         return QStringLiteral("失败");
     return QStringLiteral("已停止");
+}
+
+// 全量重建泊位树：home 归一成 resolve 后的路径（profile 面板的操作也按归一值进行），
+// knownProfiles 属于默认 home；目录缺失的组合进 missingKeys 只影响 DirExistsRole 展示
+void AppController::rebuildTree() {
+    QList<Instance> normalized;
+    for (const Instance &item : m_instances.items()) {
+        Instance copy = item;
+        copy.dshHome = resolveHome(item.dshHome);
+        normalized.push_back(copy);
+    }
+    const QString home = defaultDshHome();
+    QSet<QString> missing;
+    QSet<QString> seen;
+    auto checkDir = [&](const QString &profileHome, const QString &profileName) {
+        const QString key = profileHome + QChar(u'\u0001') + profileName;
+        if (seen.contains(key))
+            return;
+        seen.insert(key);
+        if (!QFileInfo(profileHome + QStringLiteral("/profiles/") + profileName).isDir())
+            missing.insert(key);
+    };
+    for (const Instance &item : normalized)
+        checkDir(item.dshHome, item.profile);
+    for (const QString &name : m_knownProfiles)
+        checkDir(home, name);
+    m_profileTree.rebuild(normalized, m_knownProfiles, home, missing);
 }
 
 void AppController::load() {

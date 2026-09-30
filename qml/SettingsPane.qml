@@ -3,6 +3,12 @@ import QtQuick.Controls.Windows
 import QtQuick.Layouts
 
 Item {
+    id: pane
+
+    // dsh 检查/更新结果反馈（三个 finished 信号共用）
+    property bool dshResultOk: true
+    property string dshResultText: ""
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 24
@@ -78,10 +84,100 @@ Item {
             checked: berth.settings.openUiOnStart
             onToggled: berth.settings.openUiOnStart = checked
         }
+        Label {
+            text: "dsh 安装与更新"
+            font.bold: true
+        }
+        Label {
+            text: "已安装版本：" + (berth.dshUpdate.installedVersion || "未知")
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+        Label {
+            text: "npm 最新版本：" + (berth.dshUpdate.latestVersion || "未知")
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+            Button {
+                text: "检查更新"
+                onClicked: {
+                    pane.dshResultText = ""
+                    berth.dshUpdate.checkInstalled()
+                    berth.dshUpdate.checkLatest()
+                }
+            }
+            Button {
+                text: "更新到最新"
+                enabled: !berth.dshUpdate.busy
+                onClicked: {
+                    pane.dshResultText = ""
+                    berth.dshUpdate.updateDsh()
+                }
+            }
+            BusyIndicator {
+                visible: berth.dshUpdate.busy
+                running: berth.dshUpdate.busy
+                Layout.preferredWidth: 20
+                Layout.preferredHeight: 20
+            }
+            Item { Layout.fillWidth: true }
+        }
+        Label {
+            visible: pane.dshResultText.length > 0
+            text: pane.dshResultText
+            color: pane.dshResultOk ? "#107c10" : "#c42b1c"
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+            Layout.maximumHeight: 140
+            elide: Text.ElideRight
+        }
+        Label {
+            // npm 全局安装才能自动更新，其它安装方式不适用
+            text: "更新通过 npm 全局安装执行；从源码或其它方式安装的 dsh 请手动升级。"
+            color: "#666666"
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+            Layout.fillWidth: true
+        }
         Button {
             text: "保存设置"
             onClicked: berth.settings.save()
         }
         Item { Layout.fillHeight: true }
+    }
+
+    // 进入设置页时刷新一次本地与 npm 上的版本
+    Component.onCompleted: {
+        pane.dshResultText = ""
+        berth.dshUpdate.checkInstalled()
+        berth.dshUpdate.checkLatest()
+    }
+
+    Connections {
+        target: berth.dshUpdate
+        // 成功时上方的版本行已自动更新，结果 Label 只用来报错误，避免两条检查互相覆盖
+        function onCheckInstalledFinished(ok, version, error) {
+            if (ok) {
+                pane.dshResultText = ""
+                return
+            }
+            pane.dshResultOk = false
+            pane.dshResultText = "本机版本检查失败：" + error
+        }
+        function onCheckLatestFinished(ok, version, error) {
+            if (ok) {
+                pane.dshResultText = ""
+                return
+            }
+            pane.dshResultOk = false
+            pane.dshResultText = "npm 版本检查失败：" + error
+        }
+        function onUpdateFinished(ok, message) {
+            pane.dshResultOk = ok
+            pane.dshResultText = ok ? message : ("更新失败：" + message)
+        }
     }
 }

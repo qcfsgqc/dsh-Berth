@@ -46,6 +46,12 @@ qt_add_executable(dsh-berth
     src/AppController.cpp
     src/PluginOps.h
     src/PluginOps.cpp
+    src/ProfileOps.h
+    src/ProfileOps.cpp
+    src/ProfileTreeModel.h
+    src/ProfileTreeModel.cpp
+    src/DshUpdate.h
+    src/DshUpdate.cpp
 )
 
 qt_add_resources(dsh-berth "berth_icons"
@@ -61,6 +67,7 @@ qt_add_qml_module(dsh-berth
         qml/InstancePane.qml
         qml/SettingsPane.qml
         qml/PluginsDialog.qml
+        qml/ProfileDialog.qml
         qml/WebWindow.qml
 )
 

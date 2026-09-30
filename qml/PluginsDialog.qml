@@ -8,6 +8,9 @@ Dialog {
 
     property string instanceId: ""
     property string profileName: ""
+    // profile 模式使用：直接按 DSH_HOME + profile 名取插件，不经泊位
+    property string pluginProfileName: ""
+    property string pluginHome: ""
     property bool loadOk: true
     property string loadError: ""
     property var plugins: []
@@ -22,15 +25,40 @@ Dialog {
     height: Math.min(460, parent ? parent.height - 48 : 460)
     standardButtons: Dialog.Close
 
+    // 泊位模式打开（沿用原入口）
+    function openForInstance(id) {
+        instanceId = id
+        pluginHome = ""
+        pluginProfileName = ""
+        open()
+    }
+
+    // profile 模式打开：不经泊位，直接按 home + profile 名管理插件
+    function openForProfile(home, name) {
+        instanceId = ""
+        pluginHome = home
+        pluginProfileName = name
+        open()
+    }
+
     function reload() {
-        if (!instanceId)
+        if (instanceId) {
+            const item = berth.instance(instanceId)
+            profileName = item.profile || ""
+            const r = berth.listPlugins(instanceId)
+            loadOk = !!r.ok
+            loadError = r.error || ""
+            plugins = r.plugins || []
             return
-        const item = berth.instance(instanceId)
-        profileName = item.profile || ""
-        const r = berth.listPlugins(instanceId)
-        loadOk = !!r.ok
-        loadError = r.error || ""
-        plugins = r.plugins || []
+        }
+        // profile 模式
+        if (!pluginProfileName)
+            return
+        profileName = pluginProfileName
+        const rp = berth.listPluginsForProfile(pluginHome, pluginProfileName)
+        loadOk = !!rp.ok
+        loadError = rp.error || ""
+        plugins = rp.plugins || []
     }
 
     onOpened: {
@@ -41,8 +69,10 @@ Dialog {
     Connections {
         target: berth
         function onPluginUninstallFinished(id, ok, message) {
-            if (id !== dlg.instanceId)
+            // 泊位模式：原语义，id 必须等于当前 instanceId
+            if (dlg.instanceId.length > 0 && id !== dlg.instanceId)
                 return
+            // profile 模式（instanceId 为空）：契约保证信号带空 id，直接处理
             dlg.resultOk = ok
             dlg.resultText = message
             dlg.reload()
@@ -180,7 +210,12 @@ Dialog {
         onOpened: removePackageBox.checked = false
         onAccepted: {
             dlg.resultText = ""
-            berth.uninstallPlugin(dlg.instanceId, pluginName, removePackageBox.checked)
+            if (dlg.instanceId) {
+                berth.uninstallPlugin(dlg.instanceId, pluginName, removePackageBox.checked)
+            } else {
+                berth.uninstallPluginForProfile(dlg.pluginHome, dlg.pluginProfileName,
+                                                pluginName, removePackageBox.checked)
+            }
         }
 
         contentItem: ColumnLayout {
